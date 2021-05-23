@@ -1,15 +1,5 @@
 # draw.io
 流程图
 
-#### example01
-
-requestanimationframe
-
-#### example02
-
-示例代码
-
-#### example03
-
-ConcurrentMode 示例代码
-
+## react
+从fiber 结构到requestanimationframe 调和渲染帧方面，学习理解 ReactDom.render 调用过程。
