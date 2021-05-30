@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>animationTick</title>
+    <style>
+        .tip{
+            background: yellowgreen;
+        }
+
+        .tip input {
+            width: 80px;
+            height: 28px;
+            border: 1px solid lightblue;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class='tip'>初始化了帧率 60，通过调用 requestAnimationFrame 方法可以校对</div>
+    <div class='tip'>当前浏览器的实际渲染帧率：<span id='text'>60</span></div>
+    <div class='tip'>
+        js 逻辑时长：<input id='value' value='1000'/> ms
+    </div>
+    <script>
+        var frameDeadline = 0;
+        // We start out assuming that we run at 30fps but then the heuristic tracking
+        // will adjust this value to a faster fps if we get more frequent animation
+        // frames.
+        var previousFrameTime = 60;
+        var activeFrameTime = 60;
+
+        var _TASK_TIME = 1000;
+        var sleep = function (time) {
+            var w = Date.now();
+            while (Date.now() - w < time) { }
+        }
+
+        var callback = function (rafTime) {
+            var nextFrameTime = rafTime - frameDeadline + activeFrameTime;
+
+            if (nextFrameTime < activeFrameTime && previousFrameTime < activeFrameTime) {
+                if (nextFrameTime < 8) {
+                    // Defensive coding. We don't support higher frame rates than 120hz.
+                    // If the calculated frame time gets lower than 8, it is probably a bug.
+                    nextFrameTime = 8;
+                }
+                // If one frame goes long, then the next one can be short to catch up.
+                // If two frames are short in a row, then that's an indication that we
+                // actually have a higher frame rate than what we're currently optimizing.
+                // We adjust our heuristic dynamically accordingly. For example, if we're
+                // running on 120hz display or 90hz VR display.
+                // Take the max of the two in case one of them was an anomaly due to
+                // missed frame deadlines.
+                activeFrameTime = nextFrameTime < previousFrameTime ? previousFrameTime : nextFrameTime;
+            } else {
+                previousFrameTime = nextFrameTime;
+            }
+
+            frameDeadline = rafTime + activeFrameTime;
+
+            // 模拟js 运行
+            sleep(_TASK_TIME);
+
+            document.getElementById('text').textContent = activeFrameTime;
+
+            requestAnimationFrame(callback);
+        }
+        requestAnimationFrame(callback);
+
+        /// 绑定事件
+        document.getElementById('value').onchange = function (event) {
+            _TASK_TIME = event.target.value;
+            console.log(_TASK_TIME);
+            // 恢复初始值
+            frameDeadline = 0;
+            previousFrameTime = 60;
+            activeFrameTime = 60;
+        }
+    </script>
+</body>
+
+</html>
