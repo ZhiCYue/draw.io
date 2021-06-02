@@ -1,0 +1,14 @@
+{
+  "name": "example01",
+  "version": "1.0.0",
+  "description": "requestanimationframe",
+  "main": "code.js",
+  "scripts": {
+    "start": "http-server -c-1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "http-server": "^0.12.3"
+  }
+}

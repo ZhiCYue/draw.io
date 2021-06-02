@@ -7,26 +7,82 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>animationTick</title>
     <style>
-        .tip{
-            background: yellowgreen;
-        }
-
-        .tip input {
+        input {
             width: 80px;
             height: 28px;
             border: 1px solid lightblue;
             border-radius: 4px;
         }
+        .button {
+            font-size: 12px;
+            background: #fff;
+            color: #535a69;
+            border: 1px solid #d9d9d9;
+            border-radius: 4px;
+            height: 28px;
+            min-width: 50px;
+            margin-left: 4px;
+            cursor: pointer;
+        }
+        .button:hover {
+            border-color: #000;
+        }
+        .condition,
+        .operation {
+            margin: 8px 0;
+        }
     </style>
 </head>
 
 <body>
-    <div class='tip'>初始化了帧率 60，通过调用 requestAnimationFrame 方法可以校对</div>
-    <div class='tip'>当前浏览器的实际渲染帧率：<span id='text'>60</span></div>
     <div class='tip'>
-        js 逻辑时长：<input id='value' value='1000'/> ms
+        <h3>初始化帧率 60</h3>
+        <h3>当前浏览器的实际渲染帧率：<span id='text'>60</span></h3>
+    </div>
+    <div class='operation'>
+        <div>
+            <div class='condition'>
+                <span>js进程时长：</span>
+                <input id='value' value='800'/> ms &nbsp;
+                <button id='random' class='button'>随机</button>
+            </div>
+            <div class='condition'>
+                <span>异步任务过期时间：</span>
+                <input id='timeout' value='1000'/> ms &nbsp;
+            </div>
+            <div class='condition'>
+                <span>异步任务调用频次：</span>
+                <input id='rate' value='500'/> ms/每次 &nbsp;
+            </div>
+            <div class='operation'>
+                <button id='start' class='button'>执行</button>
+                <button id='stop' class='button'>停止</button>
+                <span id='status'></span>
+            </div>
+            <div id='content'></div>
+        </div>
     </div>
     <script>
+        // 模拟js 执行时长
+        var _TASK_TIME = 1000;
+        var sleep = function (time) {
+            var w = Date.now();
+            while (Date.now() - w < time) { }
+        }
+
+        var _TIMEOUT_ = 1000;
+        var _RATE_ = 500;
+        var requestHostCallback;
+        var cancelHostCallback;
+
+        var scheduledHostCallback = null;
+        // window 的 message 事件节流控制
+        var isMessageEventScheduled = false;
+        var timeoutTime = -1;
+
+        var isAnimationFrameScheduled = false;
+        var isFlushingHostCallback = false;
+
         var frameDeadline = 0;
         // We start out assuming that we run at 30fps but then the heuristic tracking
         // will adjust this value to a faster fps if we get more frequent animation
@@ -34,13 +90,63 @@
         var previousFrameTime = 60;
         var activeFrameTime = 60;
 
-        var _TASK_TIME = 1000;
-        var sleep = function (time) {
-            var w = Date.now();
-            while (Date.now() - w < time) { }
+        // We use the postMessage trick to defer idle work until after the repaint.
+        var messageKey = '__reactIdleCallback$' + Math.random().toString(36).slice(2);
+
+        var idleTick = function (event) {
+            if (event.source !== window || event.data !== messageKey) {
+                return;
+            }
+            isMessageEventScheduled = false;
+
+            var prevScheduledCallback = scheduledHostCallback;
+            var prevTimeoutTime = timeoutTime;
+            scheduledHostCallback = null;
+            timeoutTime = -1;
+
+            var currentTime = performance.now();
+            var didTimeout = false;
+            if (frameDeadline - currentTime <= 0) {
+                // There's no time left in this idle period. Check if the callback has
+                // a timeout and whether it's been exceeded.
+                if (prevTimeoutTime !== -1 && prevTimeoutTime <= currentTime) {
+                    didTimeout = true;
+                } else {
+                    // No timeout.
+                    if (!isAnimationFrameScheduled) {
+                        isAnimationFrameScheduled = true;
+                        requestAnimationFrame(animationTick);
+                    }
+                    // Exit without invoking the callback.
+                    scheduledHostCallback = prevScheduledCallback;
+                    timeoutTime = prevTimeoutTime;
+                    return;
+                }
+            }
+
+            if (prevScheduledCallback !== null) {
+                isFlushingHostCallback = true;
+                try {
+                    prevScheduledCallback(didTimeout);
+                } finally {
+                    isFlushingHostCallback = false;
+                }
+            }
         }
 
-        var callback = function (rafTime) {
+        // Assumes that we have addEventListener in this environment. Might need
+        // something better for old IE.
+        window.addEventListener('message', idleTick, false);
+
+        var animationTick = function (rafTime) {
+            if (scheduledHostCallback !== null) {
+                requestAnimationFrame(animationTick);
+            } else {
+                // No pending work. Exit.
+                isAnimationFrameScheduled = false;
+                return;
+            }
+            
             var nextFrameTime = rafTime - frameDeadline + activeFrameTime;
 
             if (nextFrameTime < activeFrameTime && previousFrameTime < activeFrameTime) {
@@ -62,25 +168,96 @@
             }
 
             frameDeadline = rafTime + activeFrameTime;
-
-            // 模拟js 运行
-            sleep(_TASK_TIME);
-
             document.getElementById('text').textContent = activeFrameTime;
 
-            requestAnimationFrame(callback);
+            if (!isMessageEventScheduled) {
+                isMessageEventScheduled = true;
+                window.postMessage(messageKey, '*');
+            }
         }
-        requestAnimationFrame(callback);
+        
+        requestHostCallback = function (callback, absoluteTimeout) {
+            scheduledHostCallback = callback;
+            timeoutTime = absoluteTimeout;
+            if (isFlushingHostCallback || absoluteTimeout < 0) {
+                // Don't wait for the next frame. Continue working ASAP, in a new event.
+                window.postMessage(messageKey, '*');
+            } else if (!isAnimationFrameScheduled) {
+                // If rAF didn't already schedule one, we need to schedule a frame.
+                // TODO: If this rAF doesn't materialize because the browser throttles, we
+                // might want to still have setTimeout trigger rIC as a backup to ensure
+                // that we keep performing work.
+                isAnimationFrameScheduled = true;
+                requestAnimationFrame(animationTick);
+            }
+        }
 
-        /// 绑定事件
-        document.getElementById('value').onchange = function (event) {
-            _TASK_TIME = event.target.value;
-            console.log(_TASK_TIME);
+        cancelHostCallback = function () {
+            scheduledHostCallback = null;
+            isMessageEventScheduled = false;
+            timeoutTime = -1;
+        }
+
+        function reset () {
             // 恢复初始值
             frameDeadline = 0;
             previousFrameTime = 60;
             activeFrameTime = 60;
         }
+
+        var interval;
+        var excuteTimes = 0;
+        var preTastExcuteTime = performance.now();
+        function run () {
+            // 运行代码
+            if (interval) clearInterval(interval);
+            interval = setInterval(() => {
+                requestHostCallback((didTimeout) => {
+                    const curr = performance.now();
+                    console.log('time: ' + (curr - preTastExcuteTime));
+                    preTastExcuteTime = curr;
+                    document.getElementById('content').textContent = '异步调度任务执行了' + (++ excuteTimes) + '次，接收到的 didTimeout: ' + didTimeout;
+                }, _TIMEOUT_);
+                sleep(_TASK_TIME);
+            }, _RATE_);
+        }
+
+        function stop () {
+            if (interval) clearInterval(interval);
+            cancelHostCallback();
+        }
+
+        /// 绑定事件
+        document.getElementById('value').onchange = function (event) {
+            _TASK_TIME = +event.target.value;
+        }
+
+        document.getElementById('random').onclick = function () {
+            _TASK_TIME = Math.floor(Math.random() * 1000);
+            document.getElementById('value').value = _TASK_TIME;
+        }
+
+        document.getElementById('timeout').onchange = function (event) {
+            _TIMEOUT_ = +event.target.value;
+        }
+
+        document.getElementById('rate').onchange = function (event) {
+            _RATE_ = +event.target.value;
+            run();
+        }
+
+        document.getElementById('start').onclick = function () {
+            reset();
+            run();
+            document.getElementById('status').textContent = 'running';
+        }
+
+        document.getElementById('stop').onclick = function () {
+            reset();
+            stop();
+            document.getElementById('status').textContent = 'stoped';
+        }
+
     </script>
 </body>
 
